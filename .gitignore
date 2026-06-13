@@ -20,3 +20,5 @@ node_modules/
 
 # Gradle daemon config
 gradle-daemon-jvm.properties
+
+compose-multiplatform.xml
