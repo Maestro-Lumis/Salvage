@@ -19,7 +19,7 @@ fun main() {
         }
     }
 
-    embeddedServer(Netty, port = 8080) {
+    embeddedServer(Netty, port = 8081) {
         install(ServerContentNegotiation) {
             json(Json { ignoreUnknownKeys = true; isLenient = true })
         }
