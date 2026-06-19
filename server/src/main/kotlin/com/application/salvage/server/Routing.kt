@@ -10,6 +10,8 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -75,55 +77,85 @@ fun dealLevel(score: Double): String = when {
     else -> "BAD"
 }
 
+// Кэш
+private object DealsCache {
+    var data: List<DealItem> = emptyList()
+    var lastFetch: Long = 0L
+    val mutex = Mutex()
+    const val TTL_MS = 5 * 60 * 1000L // 5 минут
+
+    fun isValid(): Boolean = data.isNotEmpty() && (System.currentTimeMillis() - lastFetch) < TTL_MS
+}
+
+suspend fun fetchFreshDeals(httpClient: HttpClient): List<DealItem> {
+    val response: SteamSearchResponse = httpClient.get(
+        "https://steamcommunity.com/market/search/render/"
+    ) {
+        parameter("appid", 730)
+        parameter("count", 20)
+        parameter("sort_column", "popular")
+        parameter("sort_dir", "desc")
+        parameter("norender", 1)
+    }.body()
+
+    return response.results.mapNotNull { item ->
+        val current = item.sellPrice / 100.0
+
+        delay(500)
+
+        val overview = try {
+            httpClient.get("https://steamcommunity.com/market/priceoverview/") {
+                parameter("appid", 730)
+                parameter("currency", 1)
+                parameter("market_hash_name", item.hashName)
+            }.body<SteamPriceOverview>()
+        } catch (e: Exception) { SteamPriceOverview() }
+
+        val median = parsePrice(overview.medianPrice)
+        val score = calculateDealScore(current, median)
+
+        DealItem(
+            name = item.name,
+            hashName = item.hashName,
+            currentPrice = current,
+            dealScore = score,
+            dealLevel = dealLevel(score),
+            imageUrl = "https://community.akamai.steamstatic.com/economy/image/${item.assetDescription?.iconUrl}",
+            volume24h = item.sellListings,
+            median30d = median
+        )
+    }.sortedByDescending { it.dealScore }
+}
+
 fun Application.configureRouting(httpClient: HttpClient) {
     routing {
 
         get("/api/deals") {
             try {
-                val response: SteamSearchResponse = httpClient.get(
-                    "https://steamcommunity.com/market/search/render/"
-                ) {
-                    parameter("appid", 730)
-                    parameter("count", 20)
-                    parameter("sort_column", "popular")
-                    parameter("sort_dir", "desc")
-                    parameter("norender", 1)
-                }.body()
+                if (DealsCache.isValid()) {
+                    call.respond(DealsCache.data)
+                    return@get
+                }
 
-                val deals = response.results.mapNotNull { item ->
-                    val current = item.sellPrice / 100.0
+                DealsCache.mutex.withLock {
+                    // Повторная проверка
+                    if (DealsCache.isValid()) {
+                        call.respond(DealsCache.data)
+                        return@get
+                    }
 
-                    delay(500)
-
-                    val overview = try {
-                        val o: SteamPriceOverview = httpClient.get(
-                            "https://steamcommunity.com/market/priceoverview/"
-                        ) {
-                            parameter("appid", 730)
-                            parameter("currency", 1)
-                            parameter("market_hash_name", item.hashName)
-                        }.body()
-                        o
-                    } catch (e: Exception) { SteamPriceOverview() }
-
-                    val median = parsePrice(overview.medianPrice)
-                    val score = calculateDealScore(current, median)
-
-                    DealItem(
-                        name = item.name,
-                        hashName = item.hashName,
-                        currentPrice = current,
-                        dealScore = score,
-                        dealLevel = dealLevel(score),
-                        imageUrl = "https://community.akamai.steamstatic.com/economy/image/${item.assetDescription?.iconUrl}",
-                        volume24h = item.sellListings,
-                        median30d = median
-                    )
-                }.sortedByDescending { it.dealScore }
-
-                call.respond(deals)
+                    val fresh = fetchFreshDeals(httpClient)
+                    DealsCache.data = fresh
+                    DealsCache.lastFetch = System.currentTimeMillis()
+                    call.respond(fresh)
+                }
             } catch (e: Exception) {
-                call.respond(HttpStatusCode.InternalServerError, e.message ?: "Error")
+                // Если упало, но есть старый кэш
+                if (DealsCache.data.isNotEmpty()) {
+                    call.respond(DealsCache.data)
+                } else {
+                    call.respond(HttpStatusCode.InternalServerError, e.message ?: "Error")
+                }
             }
         }
 
