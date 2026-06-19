@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ItemModal } from './ItemModal';
+import { Radar } from './Radar';
 import './App.css';
 
 interface DealItem {
@@ -22,6 +23,7 @@ export function App() {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('dealScore');
   const [selectedItem, setSelectedItem] = useState<DealItem | null>(null);
+  const [view, setView] = useState<'grid' | 'radar'>('grid');
 
   useEffect(() => {
     fetch('http://localhost:8081/api/deals')
@@ -58,6 +60,10 @@ export function App() {
           <span className="live-dot" />
           {filtered.length} предметов
         </div>
+        <div className="view-tabs">
+          <button className={view === 'radar' ? 'active' : ''} onClick={() => setView('radar')}>Радар</button>
+          <button className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')}>Сетка</button>
+        </div>
       </nav>
 
       <main className="main">
@@ -80,7 +86,12 @@ export function App() {
         {!loading && !error && filtered.length === 0 && (
           <div className="state">Ничего не найдено</div>
         )}
-        {!loading && !error && (
+
+        {!loading && !error && filtered.length > 0 && view === 'radar' && (
+          <Radar items={filtered} onSelect={setSelectedItem} />
+        )}
+
+        {!loading && !error && filtered.length > 0 && view === 'grid' && (
           <div className="grid">
             {filtered.map(item => (
               <div key={item.hashName} className="card" onClick={() => setSelectedItem(item)}>
