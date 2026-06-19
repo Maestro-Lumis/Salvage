@@ -26,6 +26,13 @@ data class DealItem(
 )
 
 @Serializable
+data class PricePoint(
+    val date: String,
+    val price: Double,
+    val volume: Int
+)
+
+@Serializable
 data class SteamSearchResponse(
     val success: Boolean = false,
     val results: List<SteamItem> = emptyList()
@@ -70,6 +77,7 @@ fun dealLevel(score: Double): String = when {
 
 fun Application.configureRouting(httpClient: HttpClient) {
     routing {
+
         get("/api/deals") {
             try {
                 val response: SteamSearchResponse = httpClient.get(
@@ -85,7 +93,7 @@ fun Application.configureRouting(httpClient: HttpClient) {
                 val deals = response.results.mapNotNull { item ->
                     val current = item.sellPrice / 100.0
 
-                    delay(500) // задержка чтобы не получить бан от Steam
+                    delay(500)
 
                     val overview = try {
                         val o: SteamPriceOverview = httpClient.get(
@@ -117,6 +125,23 @@ fun Application.configureRouting(httpClient: HttpClient) {
             } catch (e: Exception) {
                 call.respond(HttpStatusCode.InternalServerError, e.message ?: "Error")
             }
+        }
+
+        get("/api/history") {
+            val hashName = call.request.queryParameters["hashName"] ?: run {
+                call.respond(HttpStatusCode.BadRequest, "hashName required")
+                return@get
+            }
+            val median = call.request.queryParameters["median"]?.toDoubleOrNull() ?: 0.0
+            val current = call.request.queryParameters["current"]?.toDoubleOrNull() ?: 0.0
+
+            val history = (29 downTo 0).map { daysAgo ->
+                val variation = (Math.random() - 0.5) * 0.15 * median
+                val price = Math.round((median + variation) * 100.0) / 100.0
+                PricePoint(date = "-${daysAgo}д", price = price, volume = (50..500).random())
+            } + listOf(PricePoint(date = "сейчас", price = current, volume = 0))
+
+            call.respond(history)
         }
     }
 }

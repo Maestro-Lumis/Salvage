@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ItemModal } from './ItemModal';
 import './App.css';
 
 interface DealItem {
@@ -20,6 +21,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('dealScore');
+  const [selectedItem, setSelectedItem] = useState<DealItem | null>(null);
 
   useEffect(() => {
     fetch('http://localhost:8081/api/deals')
@@ -81,7 +83,7 @@ export function App() {
         {!loading && !error && (
           <div className="grid">
             {filtered.map(item => (
-              <div key={item.hashName} className="card">
+              <div key={item.hashName} className="card" onClick={() => setSelectedItem(item)}>
                 <div className="card-img">
                   <img src={item.imageUrl} alt={item.name} />
                 </div>
@@ -101,6 +103,10 @@ export function App() {
           </div>
         )}
       </main>
+
+      {selectedItem && (
+        <ItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />
+      )}
     </div>
   );
 }
