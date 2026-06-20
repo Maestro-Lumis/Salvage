@@ -6,6 +6,7 @@ import './App.css';
 interface DealItem {
   name: string;
   hashName: string;
+  type: string;
   currentPrice: number;
   dealScore: number;
   dealLevel: string;
@@ -16,12 +17,31 @@ interface DealItem {
 
 type SortKey = 'dealScore' | 'currentPrice' | 'volume24h';
 
+const TYPE_LABELS: Record<string, string> = {
+  ALL: 'Все',
+  KNIFE: 'Ножи',
+  GLOVES: 'Перчатки',
+  RIFLE: 'Винтовки',
+  SNIPER: 'Снайперки',
+  SMG: 'SMG',
+  PISTOL: 'Пистолеты',
+  SHOTGUN: 'Дробовики',
+  HEAVY: 'Тяжёлое',
+  CASE: 'Кейсы',
+  CAPSULE: 'Капсулы',
+  STICKER: 'Стикеры',
+  MUSIC_KIT: 'Музыка',
+  AGENT: 'Агенты',
+  OTHER: 'Другое'
+};
+
 export function App() {
   const [items, setItems] = useState<DealItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('dealScore');
+  const [typeFilter, setTypeFilter] = useState('ALL');
   const [selectedItem, setSelectedItem] = useState<DealItem | null>(null);
   const [view, setView] = useState<'grid' | 'radar'>('grid');
 
@@ -38,8 +58,11 @@ export function App() {
       });
   }, []);
 
+  const availableTypes = ['ALL', ...Array.from(new Set(items.map(i => i.type)))];
+
   const filtered = items
     .filter(i => i.name.toLowerCase().includes(search.toLowerCase()))
+    .filter(i => typeFilter === 'ALL' || i.type === typeFilter)
     .sort((a, b) => {
       if (sortBy === 'currentPrice') return a.currentPrice - b.currentPrice;
       if (sortBy === 'volume24h') return b.volume24h - a.volume24h;
@@ -79,6 +102,18 @@ export function App() {
             <button className={sortBy === 'currentPrice' ? 'active' : ''} onClick={() => setSortBy('currentPrice')}>Цена</button>
             <button className={sortBy === 'volume24h' ? 'active' : ''} onClick={() => setSortBy('volume24h')}>Объём</button>
           </div>
+        </div>
+
+        <div className="type-filters">
+          {availableTypes.map(type => (
+            <button
+              key={type}
+              className={typeFilter === type ? 'active' : ''}
+              onClick={() => setTypeFilter(type)}
+            >
+              {TYPE_LABELS[type] ?? type}
+            </button>
+          ))}
         </div>
 
         {loading && <div className="state">Загрузка данных...</div>}

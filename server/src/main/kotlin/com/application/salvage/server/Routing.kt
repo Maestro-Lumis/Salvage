@@ -19,6 +19,7 @@ import kotlinx.serialization.Serializable
 data class DealItem(
     val name: String,
     val hashName: String,
+    val type: String,
     val currentPrice: Double,
     val dealScore: Double,
     val dealLevel: String,
@@ -77,31 +78,73 @@ fun dealLevel(score: Double): String = when {
     else -> "BAD"
 }
 
+// Определение типа по названию
+private val KNIVES = listOf("Karambit", "Bayonet", "M9", "Butterfly", "Falchion", "Flip", "Gut", "Huntsman", "Shadow Daggers", "Bowie", "Talon", "Ursus", "Navaja", "Stiletto", "Nomad", "Paracord", "Survival", "Skeleton", "Classic Knife", "Daggers")
+private val GLOVES = listOf("Gloves", "Wraps")
+private val RIFLES = listOf("AK-47", "M4A4", "M4A1", "FAMAS", "Galil", "SG 553", "AUG")
+private val SNIPERS = listOf("AWP", "SSG 08", "SCAR-20", "G3SG1")
+private val SMGS = listOf("MP9", "MAC-10", "UMP-45", "P90", "PP-Bizon", "MP7", "MP5-SD")
+private val PISTOLS = listOf("Glock-18", "USP-S", "P250", "Desert Eagle", "Five-SeveN", "Tec-9", "CZ75", "Dual Berettas", "R8 Revolver", "P2000")
+private val SHOTGUNS = listOf("Nova", "XM1014", "MAG-7", "Sawed-Off")
+private val HEAVY = listOf("Negev", "M249")
+private val CASES = listOf("Case")
+private val CAPSULES = listOf("Capsule")
+private val STICKERS = listOf("Sticker")
+private val MUSIC = listOf("Music Kit")
+private val AGENTS = listOf("Agent")
+
+fun parseItemType(name: String): String = when {
+    KNIVES.any { name.contains(it) } -> "KNIFE"
+    GLOVES.any { name.contains(it) } -> "GLOVES"
+    RIFLES.any { name.contains(it) } -> "RIFLE"
+    SNIPERS.any { name.contains(it) } -> "SNIPER"
+    SMGS.any { name.contains(it) } -> "SMG"
+    PISTOLS.any { name.contains(it) } -> "PISTOL"
+    SHOTGUNS.any { name.contains(it) } -> "SHOTGUN"
+    HEAVY.any { name.contains(it) } -> "HEAVY"
+    CASES.any { name.contains(it) } -> "CASE"
+    CAPSULES.any { name.contains(it) } -> "CAPSULE"
+    STICKERS.any { name.contains(it) } -> "STICKER"
+    MUSIC.any { name.contains(it) } -> "MUSIC_KIT"
+    AGENTS.any { name.contains(it) } -> "AGENT"
+    else -> "OTHER"
+}
+
 // Кэш
 private object DealsCache {
     var data: List<DealItem> = emptyList()
     var lastFetch: Long = 0L
     val mutex = Mutex()
-    const val TTL_MS = 5 * 60 * 1000L // 5 минут
+    const val TTL_MS = 5 * 60 * 1000L
 
     fun isValid(): Boolean = data.isNotEmpty() && (System.currentTimeMillis() - lastFetch) < TTL_MS
 }
 
 suspend fun fetchFreshDeals(httpClient: HttpClient): List<DealItem> {
-    val response: SteamSearchResponse = httpClient.get(
-        "https://steamcommunity.com/market/search/render/"
-    ) {
-        parameter("appid", 730)
-        parameter("count", 20)
-        parameter("sort_column", "popular")
-        parameter("sort_dir", "desc")
-        parameter("norender", 1)
-    }.body()
+    val allItems = mutableListOf<SteamItem>()
 
-    return response.results.mapNotNull { item ->
+    for (start in listOf(0, 10, 20, 30, 40, 50)) {
+        val response: SteamSearchResponse = httpClient.get(
+            "https://steamcommunity.com/market/search/render/"
+        ) {
+            parameter("query", "")
+            parameter("start", start)
+            parameter("count", 10)
+            parameter("search_descriptions", 0)
+            parameter("sort_column", "popular")
+            parameter("sort_dir", "desc")
+            parameter("appid", 730)
+            parameter("norender", 1)
+        }.body()
+
+        allItems += response.results
+        delay(300)
+    }
+
+    return allItems.mapNotNull { item ->
         val current = item.sellPrice / 100.0
 
-        delay(500)
+        delay(400)
 
         val overview = try {
             httpClient.get("https://steamcommunity.com/market/priceoverview/") {
@@ -117,6 +160,7 @@ suspend fun fetchFreshDeals(httpClient: HttpClient): List<DealItem> {
         DealItem(
             name = item.name,
             hashName = item.hashName,
+            type = parseItemType(item.name),
             currentPrice = current,
             dealScore = score,
             dealLevel = dealLevel(score),
@@ -138,7 +182,6 @@ fun Application.configureRouting(httpClient: HttpClient) {
                 }
 
                 DealsCache.mutex.withLock {
-                    // Повторная проверка
                     if (DealsCache.isValid()) {
                         call.respond(DealsCache.data)
                         return@get
@@ -150,7 +193,6 @@ fun Application.configureRouting(httpClient: HttpClient) {
                     call.respond(fresh)
                 }
             } catch (e: Exception) {
-                // Если упало, но есть старый кэш
                 if (DealsCache.data.isNotEmpty()) {
                     call.respond(DealsCache.data)
                 } else {
