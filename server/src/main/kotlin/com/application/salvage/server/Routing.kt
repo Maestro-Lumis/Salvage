@@ -9,9 +9,11 @@ import io.ktor.server.application.Application
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -78,7 +80,6 @@ fun dealLevel(score: Double): String = when {
     else -> "BAD"
 }
 
-// Определение типа по названию
 private val KNIVES = listOf("Karambit", "Bayonet", "M9", "Butterfly", "Falchion", "Flip", "Gut", "Huntsman", "Shadow Daggers", "Bowie", "Talon", "Ursus", "Navaja", "Stiletto", "Nomad", "Paracord", "Survival", "Skeleton", "Classic Knife", "Daggers")
 private val GLOVES = listOf("Gloves", "Wraps")
 private val RIFLES = listOf("AK-47", "M4A4", "M4A1", "FAMAS", "Galil", "SG 553", "AUG")
@@ -110,19 +111,17 @@ fun parseItemType(name: String): String = when {
     else -> "OTHER"
 }
 
-// Кэш
+// Кэш с фоновым обновлением
 private object DealsCache {
-    var data: List<DealItem> = emptyList()
-    var lastFetch: Long = 0L
-    val mutex = Mutex()
-    const val TTL_MS = 5 * 60 * 1000L
-
-    fun isValid(): Boolean = data.isNotEmpty() && (System.currentTimeMillis() - lastFetch) < TTL_MS
+    @Volatile var data: List<DealItem> = emptyList()
+    @Volatile var lastFetch: Long = 0L
+    const val REFRESH_INTERVAL_MS = 5 * 60 * 1000L
 }
+
+private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 suspend fun fetchFreshDeals(httpClient: HttpClient): List<DealItem> {
     val allItems = mutableListOf<SteamItem>()
-
     for (start in listOf(0, 10, 20, 30, 40, 50)) {
         val response: SteamSearchResponse = httpClient.get(
             "https://steamcommunity.com/market/search/render/"
@@ -172,32 +171,30 @@ suspend fun fetchFreshDeals(httpClient: HttpClient): List<DealItem> {
 }
 
 fun Application.configureRouting(httpClient: HttpClient) {
+
+    // Фоновая задача
+    backgroundScope.launch {
+        while (true) {
+            try {
+                val fresh = fetchFreshDeals(httpClient)
+                DealsCache.data = fresh
+                DealsCache.lastFetch = System.currentTimeMillis()
+            } catch (e: Exception) {
+            }
+            delay(DealsCache.REFRESH_INTERVAL_MS)
+        }
+    }
+
     routing {
 
         get("/api/deals") {
-            try {
-                if (DealsCache.isValid()) {
-                    call.respond(DealsCache.data)
-                    return@get
-                }
-
-                DealsCache.mutex.withLock {
-                    if (DealsCache.isValid()) {
-                        call.respond(DealsCache.data)
-                        return@get
-                    }
-
-                    val fresh = fetchFreshDeals(httpClient)
-                    DealsCache.data = fresh
-                    DealsCache.lastFetch = System.currentTimeMillis()
-                    call.respond(fresh)
-                }
-            } catch (e: Exception) {
-                if (DealsCache.data.isNotEmpty()) {
-                    call.respond(DealsCache.data)
-                } else {
-                    call.respond(HttpStatusCode.InternalServerError, e.message ?: "Error")
-                }
+            if (DealsCache.data.isNotEmpty()) {
+                call.respond(DealsCache.data)
+            } else {
+                call.respond(
+                    HttpStatusCode.ServiceUnavailable,
+                    "Данные загружаются, обновите страницу через 30 секунд"
+                )
             }
         }
 
