@@ -122,7 +122,7 @@ private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 suspend fun fetchFreshDeals(httpClient: HttpClient): List<DealItem> {
     val allItems = mutableListOf<SteamItem>()
-    for (start in listOf(0, 10, 20, 30, 40, 50)) {
+    for (start in (0..190 step 10)) {
         val response: SteamSearchResponse = httpClient.get(
             "https://steamcommunity.com/market/search/render/"
         ) {

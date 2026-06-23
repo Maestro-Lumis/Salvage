@@ -38,6 +38,7 @@ const TYPE_LABELS: Record<string, string> = {
 export function App() {
   const [items, setItems] = useState<DealItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [warming, setWarming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('dealScore');
@@ -46,16 +47,33 @@ export function App() {
   const [view, setView] = useState<'grid' | 'radar'>('grid');
 
   useEffect(() => {
-    fetch('http://localhost:8081/api/deals')
-      .then(res => res.json())
-      .then((data: DealItem[]) => {
-        setItems(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError(err.message);
-        setLoading(false);
-      });
+    let timer: ReturnType<typeof setTimeout>;
+
+    const load = () => {
+      fetch('http://localhost:8081/api/deals')
+        .then(res => {
+          if (res.status === 503) {
+            setWarming(true);
+            timer = setTimeout(load, 5000);
+            return null;
+          }
+          return res.json();
+        })
+        .then((data: DealItem[] | null) => {
+          if (data) {
+            setItems(data);
+            setWarming(false);
+            setLoading(false);
+          }
+        })
+        .catch(err => {
+          setError(err.message);
+          setLoading(false);
+        });
+    };
+
+    load();
+    return () => clearTimeout(timer);
   }, []);
 
   const availableTypes = ['ALL', ...Array.from(new Set(items.map(i => i.type)))];
@@ -90,43 +108,55 @@ export function App() {
       </nav>
 
       <main className="main">
-        <div className="controls">
-          <input
-            className="search"
-            placeholder="Поиск предмета..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          <div className="sort-tabs">
-            <button className={sortBy === 'dealScore' ? 'active' : ''} onClick={() => setSortBy('dealScore')}>Deal Score</button>
-            <button className={sortBy === 'currentPrice' ? 'active' : ''} onClick={() => setSortBy('currentPrice')}>Цена</button>
-            <button className={sortBy === 'volume24h' ? 'active' : ''} onClick={() => setSortBy('volume24h')}>Объём</button>
+        {!warming && (
+          <>
+            <div className="controls">
+              <input
+                className="search"
+                placeholder="Поиск предмета..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+              <div className="sort-tabs">
+                <button className={sortBy === 'dealScore' ? 'active' : ''} onClick={() => setSortBy('dealScore')}>Deal Score</button>
+                <button className={sortBy === 'currentPrice' ? 'active' : ''} onClick={() => setSortBy('currentPrice')}>Цена</button>
+                <button className={sortBy === 'volume24h' ? 'active' : ''} onClick={() => setSortBy('volume24h')}>Объём</button>
+              </div>
+            </div>
+
+            <div className="type-filters">
+              {availableTypes.map(type => (
+                <button
+                  key={type}
+                  className={typeFilter === type ? 'active' : ''}
+                  onClick={() => setTypeFilter(type)}
+                >
+                  {TYPE_LABELS[type] ?? type}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {warming && (
+          <div className="state warming">
+            <div className="warming-spinner" />
+            <div className="warming-title">Собираем данные с Steam Market</div>
+            <div className="warming-sub">Это первый запуск — обычно занимает 1-2 минуты</div>
           </div>
-        </div>
+        )}
 
-        <div className="type-filters">
-          {availableTypes.map(type => (
-            <button
-              key={type}
-              className={typeFilter === type ? 'active' : ''}
-              onClick={() => setTypeFilter(type)}
-            >
-              {TYPE_LABELS[type] ?? type}
-            </button>
-          ))}
-        </div>
-
-        {loading && <div className="state">Загрузка данных...</div>}
-        {error && <div className="state error">Ошибка: {error}</div>}
-        {!loading && !error && filtered.length === 0 && (
+        {!warming && loading && <div className="state">Загрузка данных...</div>}
+        {!warming && error && <div className="state error">Ошибка: {error}</div>}
+        {!warming && !loading && !error && filtered.length === 0 && (
           <div className="state">Ничего не найдено</div>
         )}
 
-        {!loading && !error && filtered.length > 0 && view === 'radar' && (
+        {!warming && !loading && !error && filtered.length > 0 && view === 'radar' && (
           <Radar items={filtered} onSelect={setSelectedItem} />
         )}
 
-        {!loading && !error && filtered.length > 0 && view === 'grid' && (
+        {!warming && !loading && !error && filtered.length > 0 && view === 'grid' && (
           <div className="grid">
             {filtered.map(item => (
               <div key={item.hashName} className="card" onClick={() => setSelectedItem(item)}>
